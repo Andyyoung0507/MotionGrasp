@@ -98,6 +98,7 @@ CosineLR = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=5, eta_mi
 # Load model checkpoint
 start_epoch = 0
 
+# 确保所有 key 都带有 'module.' 前缀，以便后续可以无缝加载到 DDP 封装的模型中。
 checkpoint_1 = torch.load(CHECKPOINT_PATH_1, map_location='cuda:{}'.format(cfgs.local_rank))
 new_state_dict = OrderedDict()
 for k, v in checkpoint_1['model_state_dict'].items():
@@ -112,6 +113,7 @@ def log_string(out_str):
     LOG_FOUT.flush()
     print(out_str)
 
+# 加载graspnet模型的预训练权重文件
 graspnet.load_state_dict(new_state_dict)
 epoch = checkpoint_1['epoch']
 if cfgs.local_rank == 0:
@@ -145,17 +147,18 @@ def train_one_epoch():
     stat_dict = {}  # collect statistics
 
     batch_interval = 1
-    for batch_idx, batch_data in enumerate(TRAIN_DATALOADER):
+    for batch_idx, batch_data in enumerate(TRAIN_DATALOADER): # 遍历数据集,批次数据循环
         for i in batch_data:
             for key in i.keys():
                 i[key] = i[key].cuda()
 
-        # forward pass
+        # forward pass 序列帧循环（时序建模）
         for frame_id in range(0, cfgs.sequence_size):
-            with torch.no_grad():
+            with torch.no_grad(): # 对每个序列的每一帧，先用 GraspNet 提取抓取点特征（不计算梯度，参数不更新）。
                 end_points = graspnet(batch_data[frame_id])
 
-            if 'batch_grasp_preds' in end_points.keys():
+            # 抓取点预测与解码
+            if 'batch_grasp_preds' in end_points.keys(): # 如果当前帧有抓取预测结果，则直接使用。
                 grasp_preds = end_points['batch_grasp_preds']
             else:
                 grasp_preds, end_points = pred_decode(end_points, remove_background=False) # (B*2, Ns, 17)
@@ -163,7 +166,7 @@ def train_one_epoch():
 
             if frame_id == 0:
                 end_points_1 = copy.deepcopy(end_points)
-                tracker(frame_id, grasp_preds, end_points_1)
+                tracker(frame_id, grasp_preds, end_points_1) #tracker 负责抓取点的时序关联和动态建模
                 continue
             else:
                 corr_pred_coarse, corr_pred_fine, training_mask, trans, rot, pose_label = tracker(frame_id, grasp_preds, end_points)
@@ -174,15 +177,16 @@ def train_one_epoch():
             torch.nn.utils.clip_grad_norm_(parameters=tracker.parameters(), max_norm=10)
             optimizer.step()
 
+            # 收集统计信息, 在分布式训练下，所有 GPU 之间同步统计指标，主进程收集和记录
             for key in end_points:
                 if ('loss' in key or 'acc' in key or 'prec' in key or 'recall' in key or 'count' in key):
-                    global_values = [torch.zeros_like(end_points[key]) for _ in range(cfgs.gpu_num)]
-                    dist.all_gather(global_values, end_points[key])
-                    if cfgs.local_rank == 0:
+                    global_values = [torch.zeros_like(end_points[key]) for _ in range(cfgs.gpu_num)] # 构建全局指标容器
+                    dist.all_gather(global_values, end_points[key]) # 所有进程/卡上的该指标值收集到 global_values 列表中
+                    if cfgs.local_rank == 0: # 主进程收集和记录
                         if key not in stat_dict:
                             stat_dict[key] = 0
                         stat_dict[key] += sum(global_values)
-        tracker.module.clear()
+        tracker.module.clear()  # 每个 batch 结束后，清空 tracker 的历史状态，准备下一个 batch
 
         if (batch_idx + 1) % batch_interval == 0:
             if cfgs.local_rank == 0:
@@ -205,7 +209,7 @@ def train(start_epoch):
             log_string(str(datetime.now()))
 
         np.random.seed()
-        with torch.autograd.set_detect_anomaly(True):
+        with torch.autograd.set_detect_anomaly(True): # PyTorch 的一个调试工具，用于在自动求导（autograd）过程中检测和定位梯度计算中的异常
             train_one_epoch()
 
         CosineLR.step()

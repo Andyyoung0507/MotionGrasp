@@ -24,7 +24,7 @@ START_FRAME_KEY_NAME = "start_frame"
 OBJECT_ID_KEY_NAME = "object_id"
 
 
-class GraspDist:
+class GraspDist: # 用来计算两个grasp之间的距离
     @classmethod
     def dist_from_grasp_pose(cls, g1: Grasp, g2: Grasp):
 
@@ -32,7 +32,8 @@ class GraspDist:
         trace = np.matmul(g1.rotation_matrix, g2.rotation_matrix.T).trace()
         trace = min(max(trace, 1.0), 3.0)
         rotation = math.acos(0.5 * (trace - 1.0))
-        return cls(translation, rotation)
+        return cls(translation, rotation) # 平移和旋转的距离
+        # cls 是 Python 中类方法（class method）的第一个参数，类似于实例方法中的 self。这是 Python 的一个约定用法，用于表示类本身而不是类的实例。
 
     def __init__(self, translation=0.1, rotation=30.0 / 180.0 * np.pi):
         self.translation = translation
@@ -49,7 +50,7 @@ class GraspDist:
     def __repr__(self):
         return "GraspDist:(t: {}, r:{})".format(self.translation, self.rotation)
 
-
+# 继承了MotionGrasp类，用于评估预测的抓取轨迹与真实轨迹的匹配程度
 class MotionGraspEval(MotionGrasp):
     def __init__(self, root, pred_dir, log_dir=None, type=None, trans=0.1, rot=30.0/180.0*np.pi):
         super(MotionGraspEval, self).__init__(root, type)
@@ -59,14 +60,16 @@ class MotionGraspEval(MotionGrasp):
             QUERY_GRASP_POSE_DIR_NAME = QUERY_GRASP_POSE_DIR_NAME + log_dir
         self.dist_thresh = GraspDist(trans, rot)
 
-    def _eval_mgta(self, data):
+    def _eval_mgta(self, data): # 使用 trackeval 库的 CLEAR 指标评估数据
         metric = trackeval.metrics.CLEAR()
         metric_result = metric.eval_sequence(data)
         return metric_result
 
+    # 解析预测结果，读取跟踪器预测的抓取姿态
     def _parse_tracker(self, scene_name, camera_sn):
-        frames = self.get_frame_list(scene_name=scene_name, camera_sn=camera_sn)
+        frames = self.get_frame_list(scene_name=scene_name, camera_sn=camera_sn) # 获取帧列表
         num_time_step = len(frames)
+        # 确定预测轨迹的最大ID
         max_pred = 0
         for frame in frames:
             tracker_ids = [
@@ -95,11 +98,14 @@ class MotionGraspEval(MotionGrasp):
                     tracker_pose_dict[time_step][tracker_id] = npy_2_grasp(
                         pose_file
                     )
-        return max_pred, tracker_present, tracker_pose_dict
+        return max_pred, tracker_present, tracker_pose_dict # 返回预测的最大ID数量、存在性矩阵和姿态字典
 
-    def _generate_gt(self, scene_name, camera_sn, dump_dir=None):
+    # 用于生成真实值（ground truth）数据。这个函数的主要目的是根据初始抓取姿态和物体运动轨迹，计算每一帧中物体的真实抓取姿态
+    def _generate_gt(self, scene_name, camera_sn, dump_dir=None): # 生成真实值（ground truth）数据
+        # 获取帧列表和基础信息
         frame_list = self.get_frame_list(scene_name=scene_name, camera_sn=camera_sn)
         num_time_step = len(frame_list)
+        # 加载查询抓取姿态数据、抓取信息
         query_grasp_pose_annotation_dir = os.path.join(
             self.root,
             SCENE_DIR_NAME,
@@ -118,15 +124,18 @@ class MotionGraspEval(MotionGrasp):
         )
         with open(json_path, "r") as grasp_info_f:
             grasp_info_dict = json.load(grasp_info_f)
-        num_gt_ids = len(query_grasp_poses)
+        # 初始化数据结构
+        num_gt_ids = len(query_grasp_poses) 
         gt_present = np.zeros((num_time_step, num_gt_ids), dtype=bool)
         gt_pose_dict = dict()
 
+        # 对每个抓取ID生成轨迹
         for gt_id, start_grasp_pose in enumerate(query_grasp_poses):
-            start_frame = grasp_info_dict[gt_id][START_FRAME_KEY_NAME]
-            attached_object_id = grasp_info_dict[gt_id][OBJECT_ID_KEY_NAME]
+            start_frame = grasp_info_dict[gt_id][START_FRAME_KEY_NAME] # 获取初始抓取姿态的开始帧
+            attached_object_id = grasp_info_dict[gt_id][OBJECT_ID_KEY_NAME] # 获取初始抓取姿态的物体ID
             find_start_frame_flag = False
-            start_frame = str(start_frame).zfill(4)
+            start_frame = str(start_frame).zfill(4) # 确保开始帧是4位数字
+            # 遍历所有帧，找到初始抓取姿态的开始帧对应的时间步
             for time_step in range(num_time_step):
                 if not frame_list[time_step] == start_frame:
                     continue
@@ -135,6 +144,7 @@ class MotionGraspEval(MotionGrasp):
                 break
             if not find_start_frame_flag:
                 raise ValueError("Start frame not found")
+            # 加载物体起始姿态
             start_pose = self.load_object_pose(
                 scene_name, camera_sn, start_frame, attached_object_id, registered=True
             )
@@ -142,9 +152,12 @@ class MotionGraspEval(MotionGrasp):
             if start_pose is None:
                 continue
 
+            # 构建完整的变换矩阵
             one = np.zeros([1,4])
             one[0,3] = 1
             start_pose = np.concatenate([start_pose, one], axis=0)
+            # 函数的核心部分
+            # 遍历所有帧，计算每个时间步的抓取姿态
             for time_step in range(start_time_step, num_time_step):
                 if not time_step in gt_pose_dict.keys():
                     gt_pose_dict[time_step] = dict()
@@ -159,16 +172,17 @@ class MotionGraspEval(MotionGrasp):
 
   
                 start_grasp_pose_ = copy.deepcopy(start_grasp_pose)
+                # 计算当前帧抓取姿态的变换过程：
                 current_grasp_pose = start_grasp_pose_.transform(
                     np.linalg.inv(start_pose)
                 ).transform(
                     current_pose
                 )
 
-                gt_present[time_step][gt_id] = True
-                gt_pose_dict[time_step][gt_id] = copy.deepcopy(current_grasp_pose)
+                gt_present[time_step][gt_id] = True # 标记当前时间步的该抓取ID为存在
+                gt_pose_dict[time_step][gt_id] = copy.deepcopy(current_grasp_pose) # 存储当前时间步的抓取姿态
 
-        if dump_dir is not None:
+        if dump_dir is not None: # 保存生成的真实值数据
             scene_dir = os.path.join(dump_dir, scene_name)
             camera_dir = os.path.join(scene_dir, CAMERA_PREFIX+camera_sn)
             os.makedirs(camera_dir, exist_ok=True)
@@ -182,6 +196,7 @@ class MotionGraspEval(MotionGrasp):
                                 gt_pose_dict[time_step][gt_id].grasp_array)
         return num_gt_ids, gt_present, gt_pose_dict
 
+    # 计算预测和真实值之间的相似度矩阵
     def _calculate_similarity(
         self, tracker_present, tracker_pose_dict, gt_present, gt_pose_dict
     ):
@@ -192,6 +207,7 @@ class MotionGraspEval(MotionGrasp):
             num_time_step_tracker == num_time_step_gt
         ), "time steps in tracker and gt should be the same"
         num_time_step = num_time_step_gt
+        # 如果两个抓取姿态的距离小于阈值，则认为它们匹配
         similarity = np.zeros(
             shape=(num_time_step, num_gt_ids, num_tracker_ids), dtype=np.uint8
         )
@@ -210,6 +226,7 @@ class MotionGraspEval(MotionGrasp):
 
         return similarity
 
+    # 解析文件，生成评估数据
     def _parse_files(self, scene_name, camera_sn, gt_dir=None):
         frame_list = self.get_frame_list(scene_name=scene_name, camera_sn=camera_sn)
         num_timestep = len(frame_list)
@@ -230,6 +247,7 @@ class MotionGraspEval(MotionGrasp):
             similarity,
         )
 
+    # 数据格式转换
     def _from_dense(
         self,
         num_timesteps,
@@ -261,10 +279,12 @@ class MotionGraspEval(MotionGrasp):
         }
         return data
 
-    def get_seq_mgta(self, scene_name, camera_sn, gt_dir=None):
+    def get_seq_mgta(self, scene_name, camera_sn, gt_dir=None): # 计算单个序列的MGTA（Motion Grasp Tracking Accuracy）
+        # 解析文件，生成评估数据并调用评估函数
         data = self._from_dense(*(self._parse_files(scene_name, camera_sn, gt_dir)))
         return self._eval_mgta(data)
-
+    
+    # 遍历所有场景和相机，计算MGTA并输出统计信息。反回平均MGTA
     def eval_mgta_all(self, gt_dir=None):
         mgta_list = []
         fn_list = []

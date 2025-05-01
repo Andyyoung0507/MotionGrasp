@@ -23,18 +23,19 @@ class Grasp_Aligner(nn.Module):
         self.rot = rot
         self.nfr = nfr
 
-        self.grasp_emb = StateEncoder(self.loc_dim, self.feature_dim)
+        self.grasp_emb = StateEncoder(self.loc_dim, self.feature_dim) # 对抓取点参数进行编码
         self.fc = nn.Linear(self.feature_dim*2, self.feature_dim*2, bias=False)
         self.fc2 = nn.Linear(self.feature_dim*2, self.feature_dim, bias=False)
 
         self.attn_aligner = AttentionNet(self.nfr, self.feature_dim*2)
 
-        self.fuse = FuseNet(self.feature_dim)
+        self.fuse = FuseNet(self.feature_dim) # 融合抓取特征和 crop 特征
         self.fc_1 = nn.Linear(self.feature_dim*2, self.feature_dim*2, bias=False)
         self.fc_2 = nn.Linear(self.feature_dim*5, self.feature_dim*4, bias=False)
         self.fc_3 = nn.Linear(self.feature_dim*4, self.feature_dim*3, bias=False)
         self.fc_4 = nn.Linear(self.feature_dim*3, self.feature_dim*2, bias=False)
 
+        # 预测旋转和位移补偿
         if self.rot == '6d':
             self.to_rot = nn.Sequential(
                         nn.Linear(self.feature_dim, self.feature_dim//2),
@@ -59,10 +60,12 @@ class Grasp_Aligner(nn.Module):
         if target_grasp.shape[2] > 12:
             target_grasp = torch.cat([target_grasp[:, :, 13:16], target_grasp[:, :, 4:13]], dim=-1)
 
+        # 编码抓取点参数
         target_coord_feat = self.grasp_emb(target_grasp) # (B, N, C)
         history_coord_feat = self.grasp_emb(his_grasp) # (B, N, L, C)
         target_coord_feat = target_coord_feat.unsqueeze(2).repeat(1,1,self.nfr,1).contiguous() # (B, N, L, C)
 
+        # 融合历史和当前抓取点的特征
         coord_feat = torch.cat([history_coord_feat, target_coord_feat], dim=-1) # (B, N, L, 2C)
         coord_feat = F.relu(self.fc(coord_feat)) # (B, N, L, 2C)
 
@@ -72,13 +75,16 @@ class Grasp_Aligner(nn.Module):
         grasp_feat = torch.cat([his_feat, target_feat], dim=-1)
         grasp_feat = F.relu(self.fc_1(grasp_feat)) # (B, N, L, 2C)
 
+        # 融合运动特征、抓取特征、参数特征
         pre_motion_feat = pre_motion_feat.unsqueeze(2).repeat(1,1,self.nfr,1).contiguous()
         all_feat = self.fc_2(torch.cat([coord_feat, grasp_feat, pre_motion_feat], dim=-1))
         all_feat = self.fc_4(F.relu(self.fc_3(F.relu(all_feat)))) # (B, N, L, 2C)
 
+        # 时序注意力机制
         all_feat = self.attn_aligner(all_feat.permute(2,0,1,3).reshape(l, b*n, -1), src_key_padding_mask=key_mask).reshape(l, b, n, -1).permute(1,2,0,3) # (B, N, L, 2C)
         all_feat = self.fc2(all_feat) # (B, N, L, C)
 
+        # 预测旋转和位移补偿，在原有历史抓取点的基础上进行补偿
         rot_pred = self.to_rot(all_feat)
         trans_pred = self.to_translation(all_feat) # (B, N, L, 3)
         if self.rot == '6d':
@@ -126,8 +132,9 @@ class AttentionNet(nn.Module):
     
 
     @staticmethod
+    # 于生成 Transformer 编码器的时序掩码（mask），其主要作用是在时序建模时防止模型“看到未来的信息”，确保每个时间步只能访问当前及之前的历史信息
     def generate_square_subsequent_mask(seq_len: int):
-        mask = (torch.triu(torch.ones(seq_len, seq_len))==1).transpose(0,1)
+        mask = (torch.triu(torch.ones(seq_len, seq_len))==1).transpose(0,1) # 生成一个上三角矩阵
         mask = torch.fliplr(mask.float().masked_fill(mask==0, float('-inf')).masked_fill(mask==1, float(0.0)))
         return mask.cuda()
 

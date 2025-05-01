@@ -36,15 +36,15 @@ class MotionTracker(nn.Module):
         self.is_training = is_training
         self.loc_dim = 12
 
-        self.trajectories = None
-        self.tracker = MatchNet(self.feature_dim, self.nfr, loc_dim=self.loc_dim)
-        self.aligner = Grasp_Aligner(self.feature_dim, self.loc_dim, self.rot_type, self.nfr)
+        self.trajectories = None # 用于存储抓取点的历史轨迹
+        self.tracker = MatchNet(self.feature_dim, self.nfr, loc_dim=self.loc_dim) # 用于抓取点与轨迹的特征匹配与关联，实现当前帧抓取点与历史轨迹的配对
+        self.aligner = Grasp_Aligner(self.feature_dim, self.loc_dim, self.rot_type, self.nfr) # 用于运动补偿与对齐，对当前帧的抓取点进行运动补偿，使其与历史轨迹更好地对齐
 
     @property
-    def empty(self):
+    def empty(self): # 判断轨迹是否为空
         return False if self.trajectories else True
     
-    def clear(self):
+    def clear(self): # 清空轨迹，便于开始新的轨迹序列
         self.label = None 
         self.trajectories = None
         if self.first_grasp is not None:
@@ -54,6 +54,7 @@ class MotionTracker(nn.Module):
         if self.first_grasp_features is not None:
             self.first_grasp_features = None    
 
+    # 维护和更新抓取点的历史轨迹，为时序建模提供支持
     def return_memo(self):
         if self.trajectories is None:
             return None
@@ -61,6 +62,7 @@ class MotionTracker(nn.Module):
             batch_grasp_list = self.trajectories.return_ref_history
             return batch_grasp_list
 
+    # 更新抓取点的历史轨迹，为时序建模提供支持
     def update_memo(self, grasp_preds, cur_frame, new_grasp=None, grasp_features=None, crop_features=None):
 
         if new_grasp is not None:
@@ -72,13 +74,15 @@ class MotionTracker(nn.Module):
         if self.trajectories is not None:
             self.trajectories.update(grasp_gt, cur_frame, length, grasp_features.cpu(), crop_features.cpu())
         else:
+            # 用于维护和更新抓取点的历史轨迹，存储历史帧的抓取点、特征等信息
             self.trajectories = MotionTrajectory(self.device, grasp_gt, cur_frame, \
                                                  grasp_features=grasp_features.cpu(), crop_features=crop_features.cpu(), \
                                                     is_training = self.is_training)
-
+    # 前向过程
     def forward(self, cur_frame, grasp_preds, end_points):
         """
         compute the grasp-trajectory pair correspondence relation scores
+        计算抓取-轨迹对的对应关系得分
         """
         # save label
         if self.is_training:
@@ -105,7 +109,7 @@ class MotionTracker(nn.Module):
                 self.label['crop_features'] = end_points['crop_features'][:, :, :, -1].permute(0,2,1).contiguous()
                 self.label['pose'] = []
             self.label['pose'].append(pose)
-        else:
+        else: # 只做特征匹配和运动补偿，不涉及标签和损失
             bs = grasp_preds.shape[0]
             training_mask = []
             for b in range(bs):
@@ -137,7 +141,7 @@ class MotionTracker(nn.Module):
                 key_mask[..., :(self.nfr-cur_frame)] = True
 
             grasp_preds = torch.cat([grasp_preds[:, :, 13:16], grasp_preds[:, :, 4:13]], dim=-1)
-            if self.is_training:
+            if self.is_training: # 调用(MatchNet)进行特征匹配，输出 coarse/fine 关联分数
                 corr_pred_coarse, corr_pred_fine, pre_motion_feat = self.tracker(tracker_feat, grasp_preds, fr_diff, grasp_feat, crop_feat, \
                                          grasp_features, crop_features, key_mask, self.label['training_mask'])
             else:
@@ -155,7 +159,7 @@ class MotionTracker(nn.Module):
             grasp_list = torch.cat([tracker_feat[..., 2:, :], grasp_preds.unsqueeze(2)], dim=2)
             grasp_feat_list = torch.cat([grasp_feat[..., 2:, :], cur_grasp_feat.unsqueeze(2)], dim=2)
             crop_feat_list = torch.cat([crop_feat[..., 2:, :], cur_crop_feat.unsqueeze(2)], dim=2)
-            if self.is_training:
+            if self.is_training: # 用 self.aligner（Grasp_Aligner）对当前帧抓取点做运动补偿，使其与历史轨迹对齐
                 new_grasp, trans, rot = self.aligner(grasp_list, self.label['source_grasp'], grasp_feat_list, self.label['grasp_features'], \
                                                         crop_feat_list, self.label['crop_features'], pre_motion_feat, key_mask[:, :-1])
                 self.update_memo(grasp_preds, cur_frame, new_grasp=new_grasp, grasp_features=cur_grasp_feat, crop_features=cur_crop_feat)
@@ -163,14 +167,14 @@ class MotionTracker(nn.Module):
             else:
                 new_grasp, trans, rot = self.aligner(grasp_list, self.first_grasp, grasp_feat_list, self.first_grasp_features, \
                                                        crop_feat_list, self.first_crop_features, pre_motion_feat, key_mask[:, :-1])
-                self.update_memo(grasp_preds, cur_frame, new_grasp=new_grasp, grasp_features=cur_grasp_feat, crop_features=cur_crop_feat)
+                self.update_memo(grasp_preds, cur_frame, new_grasp=new_grasp, grasp_features=cur_grasp_feat, crop_features=cur_crop_feat) # 用 update_memo 更新历史轨迹
                 return corr_pred_fine, new_grasp[..., -1, :]
-        else:
+        else: # 如果轨迹为空，则直接更新历史轨迹,不做匹配和补偿
             grasp_preds = torch.cat([grasp_preds[:, :, 13:16], grasp_preds[:, :, 4:13]], dim=-1)        
             self.update_memo(grasp_preds, cur_frame, grasp_features=grasp_features, crop_features=crop_features)
             return training_mask
 
-
+# 用于将源抓取点和姿态变换到目标帧下，生成 ground truth 抓取点
 def return_gt_grasp(source_grasp, source_pose, query_pose):
 
     if source_grasp.shape[-1] > 12:
@@ -193,7 +197,7 @@ def return_gt_grasp(source_grasp, source_pose, query_pose):
     return torch.cat([grasp_gt[:, :, :3, 3].squeeze(-1), \
                       grasp_gt[:, :, :3, :3].reshape(source_grasp.shape[0], source_grasp.shape[1], -1)], dim=-1).to(source_grasp.device)
 
-
+# 合并多帧的 end_points 字典，便于损失计算
 @torch.no_grad()
 def merge_frame_end_points(dict_list: List[dict]):
     length = len(dict_list)
@@ -214,7 +218,7 @@ def merge_frame_end_points(dict_list: List[dict]):
             end_points[key] = dict_list[-1][key]
     return end_points
 
-
+# 对抓取点做非极大值抑制（NMS），去除冗余抓取点
 def grasp_nms(grasp_preds):
     bs, ns, _ = grasp_preds.shape
     nms_mask = []

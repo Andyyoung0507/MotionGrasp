@@ -48,11 +48,12 @@ class GraspTracking_Dataset(Dataset):
         self.sequence_number = []
         self.graspnesspath = []
         if self.split == 'train':
+            # 训练集采用滑动窗口采样所有可能的子序列
             for scene_id in tqdm(self.sceneIds, desc='Loading data path and collision labels...'):
                 for seq_id in range(int(255/15)):
-                    for img_id in range(int(15-self.sequence_size+1)):
+                    for img_id in range(int(15-self.sequence_size+1)): # 遍历每个15帧的相机序列
                         self.colorpath.append([os.path.join(root, 'scenes', scene_id, camera, 'rgb', str(i).zfill(4) + '.png')
-                                                for i in range(seq_id*15+img_id+1, seq_id*15+img_id+self.sequence_size+1)])
+                                                for i in range(seq_id*15+img_id+1, seq_id*15+img_id+self.sequence_size+1)]) # 在每个15帧序列内，用滑动窗口采样所有可能的长度为 sequence_size 的子序列
                         self.depthpath.append([os.path.join(root, 'scenes', scene_id, camera, 'depth', str(i).zfill(4) + '.png')
                                                 for i in range(seq_id*15+img_id+1, seq_id*15+img_id+self.sequence_size+1)])
                         self.labelpath.append([os.path.join(root, 'scenes', scene_id, camera, 'label', str(i).zfill(4) + '.png')
@@ -62,6 +63,7 @@ class GraspTracking_Dataset(Dataset):
                         self.scenename.append(scene_id.strip())
                         self.frameid.append([i for i in range(seq_id*15+img_id+1, seq_id*15+img_id+self.sequence_size+1)])
         else:
+            # 测试集采用固定长度的子序列，不需要滑动窗口
             for scene_id in tqdm(self.sceneIds, desc='Loading data path and collision labels...'):
                 for img_id in range(int(255/15)):
                     self.colorpath.append([os.path.join(root, 'scenes', scene_id, camera, 'rgb', str(i).zfill(4) + '.png')

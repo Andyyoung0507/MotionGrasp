@@ -34,7 +34,8 @@ class FuseNet(nn.Module):
 
         return grasp_feat
 
-
+# 实现历史轨迹与当前帧抓取点的特征匹配与关联打分，
+# 即为“当前帧的每个抓取点”与“历史轨迹中的每个抓取点”计算一个对应分数（关联概率），从而实现抓取点的时序跟踪和身份关联
 class MatchNet(nn.Module):
     def __init__(self, feature_dim=256, time_steps=5, loc_dim=7):
         super(MatchNet, self).__init__()
@@ -50,11 +51,11 @@ class MatchNet(nn.Module):
 
         self.coord_fc4 = nn.Linear(self.feature_dim//2, 1, bias=False)
 
-        self.temporal = TemporalEncoder(historical_steps=time_steps, embed_dim=self.feature_dim)
-        self.tpe = nn.Embedding(100, self.feature_dim)
+        self.temporal = TemporalEncoder(historical_steps=time_steps, embed_dim=self.feature_dim) # 对历史轨迹的运动特征进行时序建模（Transformer）。
+        self.tpe = nn.Embedding(100, self.feature_dim) # 时间编码，用于建模帧间差异
 
-        self.rel_emb = StateEncoder(loc_dim, self.feature_dim)
-        self.spatial = SpatialEncoder(self.feature_dim)
+        self.rel_emb = StateEncoder(loc_dim, self.feature_dim) 
+        self.spatial = SpatialEncoder(self.feature_dim) 
         self.fuse = FuseNet(self.feature_dim)
 
     def forward(self, pre_coord_all, cur_coord_all, fr_diff, grasp_feat, crop_feat, grasp_features, crop_features, key_mask=None, pre_mask=None, his_coord_all=None, his_mask=None):
@@ -88,7 +89,7 @@ class MatchNet(nn.Module):
         pre_last = pre_coord_all[..., -1, :]
         pos_emb = self.rel_emb(pre_last) # (B, M, C)
 
-        # compute cur grasp feature diff
+        # compute cur grasp feature diff and fuse them using FuseNet
         pre_last_grasp_feat = grasp_feat[..., -1, :] # (B, M, 2C)
         pre_last_crop_feat = crop_feat[..., -1, :] # (B, M, 2C)
         pre_last_feat = self.fuse(pre_last_grasp_feat, pre_last_crop_feat).unsqueeze(2)
@@ -136,7 +137,7 @@ class MatchNet(nn.Module):
 
         return scores_coarse, scores_fine, pre_feat
 
-
+# 计算两个抓取点旋转矩阵之间的差异
 def compute_rotation_diff(grasp_1, grasp_2):
     """
     grasp: (B, M/N, 9) or (B, M, L, 9)
@@ -147,7 +148,8 @@ def compute_rotation_diff(grasp_1, grasp_2):
         grasp_rot_1 = grasp_1.reshape(b, m, 3, 3).unsqueeze(2) # (b, m, 1, 3, 3)
         grasp_rot_2 = grasp_2.reshape(b, n, 3, 3).unsqueeze(1) # (b, 1, n, 3, 3)
 
-        rot = torch.matmul(grasp_rot_2.transpose(3,4), grasp_rot_1) # ()
+        rot = torch.matmul(grasp_rot_2.transpose(3,4), grasp_rot_1) # () 正交矩阵的转置等于它的逆矩阵
+        # batch_viewpoint_params_to_matrix 函数保证类生成的旋转矩阵是正交矩阵，R1，R2分别都是正交矩阵！
         # rot = torch.diagonal(rot, dim1=3, dim2=4).sum(dim=3) # (b, m, n)
         rot = rot.view(b, m, n, 9)
     else:
@@ -158,5 +160,6 @@ def compute_rotation_diff(grasp_1, grasp_2):
         rot = torch.matmul(grasp_rot_2.transpose(3,4), grasp_rot_1)
         rot = rot.view(b, m, l, 9)
 
-    return rot
+    return rot # 返回抓取点旋转矩阵之间的差异
+    # 差异小靠近单位矩阵，差异大远离单位矩阵
 

@@ -72,7 +72,7 @@ class GraspNet(nn.Module):
         end_points = self.grasp_generator(end_points)
         return end_points
 
-
+# 将多个帧（frame）的 end_points 字典合并为一个新的字典，以便后续批量处理、损失计算或统计分析
 @torch.no_grad()
 def merge_frame_end_points(dict_list: List[dict]):
     length = len(dict_list)
@@ -88,6 +88,7 @@ def merge_frame_end_points(dict_list: List[dict]):
             end_points[key] = torch.stack(data_list).cuda().contiguous()
 
     # save loss information to each end_point
+    # 对于 key 名中包含 'loss' 的项，直接取最后一帧的损失值，放入合并后的字典
     for key in dict_list[-1].keys():
         if 'loss' in key:
             end_points[key] = dict_list[-1][key]

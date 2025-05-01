@@ -83,7 +83,7 @@ def my_worker_init_fn(worker_id):
     np.random.seed(np.random.get_state()[1][0] + worker_id)
     pass
 
-
+# 为每个测试序列生成初始查询抓取点，这些点将作为后续跟踪的起点
 @torch.no_grad()
 def make_query_grasp():
     ge = GraspNetEval(root=cfgs.dataset_root, camera=cfgs.camera, split='test')
@@ -208,7 +208,7 @@ def make_query_grasp():
                 f.write(query_json)
                 f.close
 
-
+# 抓取点轨迹推理，对整个序列预测抓取点的运动轨迹，实现对初始查询抓取点的跟踪。
 @torch.no_grad()
 def inference():
     # Prepare dataset and dataloader
@@ -232,12 +232,13 @@ def inference():
     # Load checkpoint
     checkpoint_1 = torch.load(os.path.join(cfgs.checkpoint_path_1))
     checkpoint_2 = torch.load(os.path.join(cfgs.log_dir, cfgs.checkpoint_path_2))
+    # 解决了使用DataParallel或DistributedDataParallel训练的模型权重与单GPU加载时的兼容性问题
     new_state_dict_1 = OrderedDict()
     for k, v in checkpoint_2['model_state_dict'].items():
         name = k[7:] if k.startswith('module.') else k
         new_state_dict_1[name] = v
-    graspnet.load_state_dict(checkpoint_1['model_state_dict'])
-    tracker.load_state_dict(new_state_dict_1)
+    graspnet.load_state_dict(checkpoint_1['model_state_dict']) # 加载GraspNet模型权重
+    tracker.load_state_dict(new_state_dict_1) # 加载MotionTracker模型权重
     
     start_epoch = checkpoint_1['epoch']
     print("-> loaded checkpoint %s (epoch: %d)" % (cfgs.checkpoint_path_1, start_epoch))
@@ -247,6 +248,7 @@ def inference():
     graspnet.eval()
     tracker.eval()
     tic = time.time()
+    # 批处理循环 test_dataloader
     for batch_idx, batch_data in enumerate(tqdm(test_dataloader)):
         data_idx = batch_idx * cfgs.batch_size
         scene_id = int(scene_list[data_idx].split('_')[1])
@@ -256,7 +258,7 @@ def inference():
             for key in i.keys():
                 i[key] = i[key].to(device)
 
-        # get referenced grasps
+        # get referenced grasps 从预先保存的文件中加载查询抓取点和索引
         end_points = graspnet(batch_data[0])
         if 'batch_grasp_preds' in end_points.keys():
             grasp_preds = end_points['batch_grasp_preds']
@@ -266,7 +268,7 @@ def inference():
         # load referenced grasp indices
         grasp_indices_list = []
         query_grasp_list = []
-        for b in range(len(grasp_preds)):
+        for b in range(len(grasp_preds)): # 遍历每个抓取pose
             data_idx = batch_idx * cfgs.batch_size + b
             query_dir = os.path.join(cfgs.evaluate_root, 'scenes', scene_list[data_idx],
                                     'camera_{}_{}'.format(str(scene_list[data_idx].split('_')[1]),
@@ -277,33 +279,36 @@ def inference():
             query_grasp_list.append(query_grasp)
             grasp_indices = torch.tensor(np.load(query_indices_path))
             grasp_indices_list.append(grasp_indices)
+
+        # 保存的信息主要转换为了grasp_indices和query_grasp
         grasp_indices = torch.stack(grasp_indices_list, dim=0)
         query_grasp = torch.stack(query_grasp_list, dim=0)
         batch_grasp_list = []
 
-        for frame_id in range(0, cfgs.sequence_size):
+        for frame_id in range(0, cfgs.sequence_size): # 帧序列处理循环
             end_points = graspnet(batch_data[frame_id])
             if 'batch_grasp_preds' in end_points.keys():
                 grasp_preds = end_points['batch_grasp_preds']
             else:
                 grasp_preds, _ = pred_decode(end_points, remove_background=False) # (B, Ns, 17)
 
-            if frame_id == 0:
+            if frame_id == 0: # 对序列中的每一帧调用 GraspNet 生成抓取预测
                 end_points_1 = copy.deepcopy(end_points)
                 tracker(frame_id, grasp_preds, end_points_1)
                 grasp_preds_1 = pointnet2_utils.gather_operation(grasp_preds.permute(0,2,1).contiguous(), grasp_indices.cuda().to(torch.int)).permute(0,2,1)
                 batch_grasp_list.append(grasp_preds_1)
                 continue
-            else:
+            else: # 对序列中的每一帧调用 MotionTracker 生成抓取预测跟踪
                 corr_pred, _ = tracker(frame_id, grasp_preds, end_points)
 
             _, top_indices = torch.max(corr_pred, dim=2)
                 
             grasp_preds = pointnet2_utils.gather_operation(grasp_preds.permute(0,2,1).contiguous(), top_indices.cuda().to(torch.int)).permute(0,2,1)
             batch_grasp_list.append(grasp_preds)
-        
-        new_grasp = tracker.return_memo()
-        for frame_id in range(0, cfgs.sequence_size-1):
+
+        # 运动补偿应用
+        new_grasp = tracker.return_memo() # 从跟踪器获取运动记忆（包含预测的位置和方向变化）
+        for frame_id in range(0, cfgs.sequence_size-1): # 对第1帧到最后一帧的抓取点应用运动补偿：
             grasp_preds = batch_grasp_list[frame_id+1]
             # grasp_preds[..., 13:16] = new_grasp[frame_id][..., :3]
             # grasp_preds[..., 4:13] = new_grasp[frame_id][..., 3:12]
@@ -319,6 +324,7 @@ def inference():
             for i in range(cfgs.batch_size):
                 data_idx = batch_idx * cfgs.batch_size + i
         
+                # 为每个批次中的样本创建保存目录
                 save_dir = os.path.join(cfgs.dump_dir, scene_list[data_idx], 
                                         'camera_{}_{}'.format(str(scene_list[data_idx].split('_')[1]), 
                                         str(sequence_list[data_idx]).zfill(4)), '{}'.format(str(frame).zfill(4)))
@@ -331,16 +337,18 @@ def inference():
                     np.save(save_path, grasp_group[j].grasp_array, allow_pickle=True)
                     # grasp_group[j].save_npy(save_path)
 
-
+# 用于确定预测的抓取点与真实抓取点之间的对应关系，判断它们是否表示同一个物理抓取位置。这是评估抓取点跟踪精度的关键组件
 def compute_grasp_correspondence(grasp_preds, grasp_preds_gt, source_pose, cur_pose):
-    grasp_preds_gt = return_gt_grasp(grasp_preds_gt, source_pose, cur_pose)
+    grasp_preds_gt = return_gt_grasp(grasp_preds_gt, source_pose, cur_pose) # 对真实抓取点执行坐标变换
 
+    # 提取平移和旋转信息
     bs = grasp_preds.shape[0]
     if grasp_preds.shape[2] > 12:
         grasp_preds = torch.cat([grasp_preds[:, :, 13:16], grasp_preds[:, :, 4:13]], dim=-1)
     if grasp_preds_gt.shape[2] > 12:
         grasp_preds_gt = torch.cat([grasp_preds_gt[:, :, 13:16], grasp_preds_gt[:, :, 4:13]], dim=-1)
 
+    # 从抓取表示中提取关键信息
     grasp_trans = grasp_preds[:, :, :3]
     grasp_rot = grasp_preds[:, :, 3:12].reshape(bs, grasp_preds.shape[1], 3, 3)
     gt_trans = grasp_preds_gt[:, :, :3]
@@ -350,7 +358,7 @@ def compute_grasp_correspondence(grasp_preds, grasp_preds_gt, source_pose, cur_p
     trans_correspondence = torch.norm(gt_trans - grasp_trans, dim=2)
     trans_valid_mask = trans_correspondence <= 0.1
     
-    # compute rotation correspondence
+    # compute rotation correspondence，仍然利用了 罗德里格旋转公式 
     rot_correspondence = torch.matmul(gt_rot, grasp_rot.transpose(2,3))
     rot_correspondence = torch.diagonal(rot_correspondence, dim1=2, dim2=3).sum(dim=2)
     rot_correspondence = torch.clamp(rot_correspondence, 1, 3)
@@ -383,6 +391,7 @@ def evaluate():
     pred_path = cfgs.dump_dir
     if not os.path.exists(pred_path):
         os.makedirs(pred_path)
+    # 创建评估器实例
     mgev = MotionGraspEval(cfgs.evaluate_root, log_dir=None, pred_dir=pred_path, type=cfgs.test_type)
     print('='*40)
     print('Evaluating scene')
@@ -394,9 +403,11 @@ def evaluate():
 
 
 def compute_correspondence_object_pose(grasp_preds, seed_inds, end_points, end_points_gt, grasp_gt):
+    # 提取抓取点信息
     B, Ns, _ = grasp_preds.size()
     grasp_trans_preds, grasp_trans_gt = grasp_preds[:, :, 13:16], grasp_gt[:, :, 13:16]
     grasp_rot_preds, grasp_rot_gt = grasp_preds[:, :, 4:13].view(B, Ns, 3, 3), grasp_gt[:, :, 4:13].view(B, Ns, 3, 3)
+    # 收集物体位姿信息
     preds_poses = []
     gt_poses = []
     for batch_id in range(B):
@@ -418,6 +429,7 @@ def compute_correspondence_object_pose(grasp_preds, seed_inds, end_points, end_p
         gt_seed_poses = gt_object_poses[gt_seed_segs]
         gt_poses.append(gt_seed_poses)
 
+    # 将物体位姿信息转换为张量，准备坐标变换
     preds_poses = torch.stack(preds_poses, dim=0).contiguous()
     gt_poses = torch.stack(gt_poses, dim=0).contiguous()
     preds_poses_inv = torch.inverse(preds_poses)
@@ -426,9 +438,9 @@ def compute_correspondence_object_pose(grasp_preds, seed_inds, end_points, end_p
     # translation correspondence
     grasp_trans_preds = torch.matmul(preds_poses_inv[:, :, :3, :3], grasp_trans_preds.unsqueeze(-1)).squeeze(-1)
     grasp_trans_preds = grasp_trans_preds + preds_poses_inv[:, :, :3, 3]
-    grasp_trans_gt = torch.matmul(gt_poses_inv[:, :, :3, :3], grasp_trans_gt.unsqueeze(-1)).squeeze(-1)
-    grasp_trans_gt = grasp_trans_gt + gt_poses_inv[:, :, :3, 3]
-    trans_correspondence = torch.norm(grasp_trans_preds-grasp_trans_gt, dim=2) <= 0.1
+    grasp_trans_gt = torch.matmul(gt_poses_inv[:, :, :3, :3], grasp_trans_gt.unsqueeze(-1)).squeeze(-1) # 将预测抓取点转换到物体坐标系 旋转
+    grasp_trans_gt = grasp_trans_gt + gt_poses_inv[:, :, :3, 3] # 平移
+    trans_correspondence = torch.norm(grasp_trans_preds-grasp_trans_gt, dim=2) <= 0.1 # 计算欧式距离
     
     # rotation correspondence
     grasp_rot_preds = torch.matmul(preds_poses_inv[:, :, :3, :3], grasp_rot_preds)
@@ -436,22 +448,23 @@ def compute_correspondence_object_pose(grasp_preds, seed_inds, end_points, end_p
     rot_correspondence = torch.matmul(grasp_rot_preds, grasp_rot_gt.transpose(2,3))
     rot_correspondence = torch.diagonal(rot_correspondence, dim1=2, dim2=3).sum(dim=2)
     rot_correspondence = torch.clamp(rot_correspondence, 1, 3)
-    rot_correspondence = torch.acos((rot_correspondence-1)/2) <= 30.0 / 180.0 * np.pi
+    rot_correspondence = torch.acos((rot_correspondence-1)/2) <= 30.0 / 180.0 * np.pi # 计算旋转角度差异
 
     valid_mask = trans_correspondence & rot_correspondence
     
     return valid_mask
 
-
+# 计算并输出平均平移和旋转误差
 def compute_trans_and_rot_diff(type):
     pred_path = cfgs.dump_dir
     gt_path = cfgs.gt_dir
 
     trans = []
     rot = []
+    # 场景类型选择
     scene_list = sorted(os.listdir(gt_path))
     all_type = {'all':scene_list, 'seen':scene_list[0:30], 'similar':scene_list[30:60], 'novel':scene_list[60:]}
-    for scene_id, scene in enumerate(tqdm(all_type[type])):
+    for scene_id, scene in enumerate(tqdm(all_type[type])): # 函数使用4层嵌套循环遍历每个抓取点：
         # if int(scene.split('_')[-1]) >= 187: continue
         pred_camera_list = os.listdir(os.path.join(pred_path, scene))
         gt_camera_list = sorted(os.listdir(os.path.join(gt_path, scene)))
@@ -474,25 +487,25 @@ def compute_trans_and_rot_diff(type):
                     pred_grasp = np.load(os.path.join(pred_path, scene, camera_sn, frame, grasp))
                     gt_grasp = np.load(os.path.join(gt_path, scene, camera_sn, frame, grasp))
                                        
-                    trans_diff = np.linalg.norm(pred_grasp[None,:][:,13:16]-gt_grasp[None,:][:,13:16])
+                    trans_diff = np.linalg.norm(pred_grasp[None,:][:,13:16]-gt_grasp[None,:][:,13:16]) # 计算平移误差 欧氏距离
                     
                     pred_rot = pred_grasp[4:13].reshape(3,3)
                     gt_rot = gt_grasp[4:13].reshape(3,3)
 
                     rot_diff = (np.trace(np.dot(np.linalg.inv(gt_rot), pred_rot))-1)/2
                     rot_diff = np.clip(rot_diff, -1, 1)
-                    rot_diff = 180*(abs(math.acos(rot_diff)))/math.pi
+                    rot_diff = 180*(abs(math.acos(rot_diff)))/math.pi # 计算旋转误差 弧度制
 
                     trans_frame.append(trans_diff)
                     rot_frame.append(rot_diff)
                 
-                trans_camera.append(sum(trans_frame)/len(trans_frame))
+                trans_camera.append(sum(trans_frame)/len(trans_frame)) # frame级别平均
                 rot_camera.append(sum(rot_frame)/len(rot_frame))
 
-            trans_scene.append(sum(trans_camera)/len(trans_camera))
+            trans_scene.append(sum(trans_camera)/len(trans_camera)) # camera级别平均
             rot_scene.append(sum(rot_camera)/len(rot_camera))
 
-        trans.append(sum(trans_scene)/len(trans_scene))
+        trans.append(sum(trans_scene)/len(trans_scene)) # scene级别平均
         rot.append(sum(rot_scene)/len(rot_scene))
         # print('trans error: {}, {}'.format(scene, sum(trans_scene)/len(trans_scene)))
         # print('rot error: {}, {}'.format(scene, sum(rot_scene)/len(rot_scene)))

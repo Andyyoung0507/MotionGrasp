@@ -1,3 +1,5 @@
+# 该脚本用于将 GraspNet-1Billion 数据集的原始数据，按照动态抓取任务的需求，
+# 重新组织和分割，为后续的动态抓取模型训练和评估提供标准化的数据格式和索引。
 import os
 import sys
 import numpy as np
@@ -103,17 +105,18 @@ def make_frame_dicts(type):
         meta_path = os.path.join(realsense_path, 'meta')
         scene_dict = {}
 
-        for camera in range(int((image_num-1)/15)):
-            camera_sn = '{}_{}'.format(str(id+100+int(offset[type])).zfill(4), str(camera).zfill(4))
-            meta = scio.loadmat(os.path.join(meta_path, '0000.mat'))
-            obj_idxs = meta['cls_indexes'].flatten().astype(np.int32)
-            camera_dict = {}
+        for camera in range(int((image_num-1)/15)): # 遍历每个相机序列，每15帧为一个相机序列
+            camera_sn = '{}_{}'.format(str(id+100+int(offset[type])).zfill(4), str(camera).zfill(4)) # 相机序列号
+            meta = scio.loadmat(os.path.join(meta_path, '0000.mat')) # 加载相机内参
+            obj_idxs = meta['cls_indexes'].flatten().astype(np.int32) # 获取物体索引
+            camera_dict = {} # 创建相机字典
             
             for obj_id in obj_idxs:
                 camera_dict[str(obj_id)] = 'to be finished'
             scene_dict[camera_sn] = camera_dict
         
-        frame_dicts[scene] = scene_dict
+        frame_dicts[scene] = scene_dict # 将相机字典添加到场景字典中
+    # 保存场景字典
     frame_path = os.path.join(cfgs.billion_root, 'collision_label_initial_frame', '{}_frame_dicts.json'.format(type))
     make_dir(os.path.join(cfgs.billion_root, 'collision_label_initial_frame'))
 
@@ -123,14 +126,14 @@ def make_frame_dicts(type):
     f.close()
 
 
-def make_object_name_list():
+def make_object_name_list(): 
     object_name_list = []
     save_dict = {}
     object_name_list_path = os.path.join(cfgs.billion_root, 'default.yaml')
 
     model_list = sorted(os.listdir(model_root))
     for id, model in enumerate(model_list):
-        object_name_list.append('{}.ply'.format(obj_names[id]))
+        object_name_list.append('{}.ply'.format(obj_names[id])) # 添加物体模型列表
     
     save_dict['object_model_list'] = object_name_list
     with open(object_name_list_path, 'w') as f:

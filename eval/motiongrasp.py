@@ -10,7 +10,7 @@ import yaml
 def _isArrayLike(obj):
     return hasattr(obj, "__iter__") and hasattr(obj, "__len__")
 
-
+# 关键常量
 SCENE_DIR_NAME = "scenes"
 CAMERA_PREFIX = "camera_"
 SCENE_METADATA_FILE = "metadata.json"
@@ -29,6 +29,7 @@ GRASP_HEIGHT = 0.02
 
 
 class MotionGrasp:
+    # 初始化 MotionGrasp 对象，加载数据集的基本配置和元数据
     def __init__(self, root, type=None):
         self.root = root
         self.scenes_root = os.path.join(self.root, SCENE_DIR_NAME)
@@ -39,10 +40,10 @@ class MotionGrasp:
         self._load_camera_intrinsics()
         self._load_object_name_list()
 
-    def _get_scene_name_list(self):
+    def _get_scene_name_list(self): # 场景和相机信息处理
         return sorted(os.listdir(self.scenes_root))
 
-    def _get_camera_sn_list(self, scene_name):
+    def _get_camera_sn_list(self, scene_name): # 获取场景中的相机序列号列表
         scene_dir = os.path.join(self.scenes_root, scene_name)
         cam_sn_list = [
             name.split("_")[1]
@@ -51,13 +52,13 @@ class MotionGrasp:
         ]
         return sorted(cam_sn_list)
 
-    def _check_metadata(self, scene_name, metadata):
+    def _check_metadata(self, scene_name, metadata): # 检查元数据是否与场景中的相机序列号列表一致
         cam_sn_list = self._get_camera_sn_list(scene_name=scene_name)
         cam_set = set(cam_sn_list + ["num_" + cam_sn for cam_sn in cam_sn_list])
         key_set = set(metadata.keys())
         return cam_set == key_set
 
-    def load_scene_metadata(self, scene_name):
+    def load_scene_metadata(self, scene_name): # 加载指定场景的元数据（JSON格式）。
         scene_dir = os.path.join(self.scenes_root, scene_name)
         with open(
             os.path.join(scene_dir, SCENE_METADATA_FILE), "r"
@@ -65,12 +66,12 @@ class MotionGrasp:
             scene_meta = json.load(metadata_json_file)
         return scene_meta
 
-    def _get_valid_frame_list(self, scene_name, camera_sn):
+    def _get_valid_frame_list(self, scene_name, camera_sn): # 获取指定场景和相机序列号的有效帧列表
         scene_meta = self.load_scene_metadata(scene_name=scene_name)
         assert len(scene_meta[camera_sn]) == scene_meta["num_" + camera_sn]
         return [str(int_camera_sn) for int_camera_sn in scene_meta[camera_sn]]
 
-    def get_frame_list(self, scene_name, camera_sn):
+    def get_frame_list(self, scene_name, camera_sn): # 获取指定场景和相机序列号的有效帧列表
         camera_dir = os.path.join(
             self.root, SCENE_DIR_NAME, scene_name, CAMERA_PREFIX + camera_sn
         )
@@ -81,7 +82,7 @@ class MotionGrasp:
             ]
         )
 
-    def _load_camera_intrinsics(self):
+    def _load_camera_intrinsics(self): # 加载相机内参
         camera_sn_list = [
             camera_sn.replace(".npy", "")
             for camera_sn in os.listdir(os.path.join(self.root, "cam_intrinsics"))
@@ -93,10 +94,10 @@ class MotionGrasp:
             )
         self.camera_intrinsics = camera_intrinsics
 
-    def load_cam_intrinsic(self, camera_sn):
+    def load_cam_intrinsic(self, camera_sn): # 加载指定相机序列号的相机内参
         return self.camera_intrinsics[camera_sn]
 
-    def get_rgb_path(self, scene_name, camera_sn, frame):
+    def get_rgb_path(self, scene_name, camera_sn, frame): # 获取指定场景和相机序列号的RGB图像路径
         return os.path.join(
             self.root,
             SCENE_DIR_NAME,
@@ -106,7 +107,7 @@ class MotionGrasp:
             "{}.png".format(frame),
         )
 
-    def get_depth_path(self, scene_name, camera_sn, frame):
+    def get_depth_path(self, scene_name, camera_sn, frame): # 获取指定场景和相机序列号的深度图像路径
         return os.path.join(
             self.root,
             SCENE_DIR_NAME,
@@ -116,7 +117,7 @@ class MotionGrasp:
             "{}.png".format(frame),
         )
 
-    def load_point_cloud(self, scene_name, camera_sn, frame):
+    def load_point_cloud(self, scene_name, camera_sn, frame): # 加载指定场景和相机序列号的点云
         depth_path = self.get_depth_path(scene_name, camera_sn, frame)
         rgb_path = self.get_rgb_path(scene_name, camera_sn, frame)
         intrinsic = self.load_cam_intrinsic(CAMERA_PREFIX+camera_sn)
@@ -132,10 +133,10 @@ class MotionGrasp:
             depth_scale=depth_scale,
         )
         points, colors = o3dp.pcd2array(pcd)
-        mask = points[:, 2] < Z_DISTANCE_THRESH
+        mask = points[:, 2] < Z_DISTANCE_THRESH # 过滤掉距离相机太远的点
         return o3dp.array2pcd(points[mask], colors[mask])
 
-    def _load_object_name_list(self):
+    def _load_object_name_list(self): # 加载对象名称列表
         with open(
             os.path.join(self.root, DATASET_METADATA_FILE), "r"
         ) as scene_metadata_file:
@@ -146,13 +147,13 @@ class MotionGrasp:
             for object_file_name in scene_metadata["object_model_list"]
         ]
 
-    def load_object_point_cloud(self, obj_id):
+    def load_object_point_cloud(self, obj_id): # 加载指定对象的点云
         models_dir = os.path.join(self.root, MODELS_DIR)
         return o3d.io.read_point_cloud(
             os.path.join(models_dir, "{}.ply".format(self.object_name_list[obj_id]))
         )
 
-    def load_scene_object_list(self, scene_name, camera_sn, frame):
+    def load_scene_object_list(self, scene_name, camera_sn, frame): # 加载指定场景和相机序列号的所有的物体列表
         frame_pose_dir = os.path.join(
             self.root,
             SCENE_DIR_NAME,
@@ -171,7 +172,7 @@ class MotionGrasp:
             )
         )
 
-    def load_scene_registered_object_list(self, scene_name, camera_sn, frame):
+    def load_scene_registered_object_list(self, scene_name, camera_sn, frame): # 加载指定场景和相机序列号的注册后的物体列表
         frame_pose_dir = os.path.join(
             self.root,
             SCENE_DIR_NAME,
@@ -191,7 +192,7 @@ class MotionGrasp:
             )
         )
 
-    def load_object_pose(self, scene_name, camera_sn, frame, obj_id, registered=True):
+    def load_object_pose(self, scene_name, camera_sn, frame, obj_id, registered=True): # 加载指定场景和相机序列号的物体位姿
         frame_pose_dir = os.path.join(
             self.root,
             SCENE_DIR_NAME,
@@ -200,7 +201,7 @@ class MotionGrasp:
             POSE_DIR,
             frame,
         )
-        prefix = "" if not registered else "registered_"
+        prefix = "" if not registered else "registered_" # 特定物体在特定帧中的姿态矩阵。registered 参数决定是否加载已注册的姿态
         if not os.path.exists(
             os.path.join(frame_pose_dir, "{}{}.npy".format(prefix, obj_id))
         ):
@@ -208,7 +209,7 @@ class MotionGrasp:
         pose = np.load(os.path.join(frame_pose_dir, "{}{}.npy".format(prefix, obj_id)))
         return pose
 
-    def get_registered_object_pose_filename(self, scene_name, camera_sn, frame, obj_id):
+    def get_registered_object_pose_filename(self, scene_name, camera_sn, frame, obj_id): # 获取指定场景和相机序列号的注册后的物体位姿文件名
         frame_pose_dir = os.path.join(
             self.root,
             SCENE_DIR_NAME,
@@ -219,7 +220,7 @@ class MotionGrasp:
         )
         return os.path.join(frame_pose_dir, "registered_{}.npy".format(obj_id))
 
-    def load_scene_with_object(self, scene_name, camera_sn, frame, registered=True):
+    def load_scene_with_object(self, scene_name, camera_sn, frame, registered=True): # 加载指定场景和相机序列号的场景点云和物体点云
         pcds = [
             self.load_point_cloud(
                 scene_name=scene_name, camera_sn=camera_sn, frame=frame
@@ -243,7 +244,7 @@ class MotionGrasp:
             pcds.append(pcd)
         return pcds
 
-    def get_near_frames(self, scene_name, camera_sn, frame, max_distance):
+    def get_near_frames(self, scene_name, camera_sn, frame, max_distance): # 获取指定场景和相机序列号中与指定帧相距较近的帧
         near_frames = []
         frame_list = self.get_frame_list(scene_name=scene_name, camera_sn=camera_sn)
         if not frame in frame_list:
@@ -257,7 +258,7 @@ class MotionGrasp:
         return near_frames
 
 
-    def _get_gt_collision_frame_dict(self, split="multiobj_25frame", type=None):
+    def _get_gt_collision_frame_dict(self, split="multiobj_25frame", type=None): # 获取指定场景和相机序列号的碰撞标签
         assert split in [
             "multiobj_25frame",
             "initial_frame",
@@ -284,9 +285,9 @@ class MotionGrasp:
         return frame_dict
 
 
-    def _load_initial_frame_collision_labels(
+    def _load_initial_frame_collision_labels( 
         self, scene_name, camera_sn, frame, obj_id
-    ):
+    ): # 加载指定场景和相机序列号的初始帧的碰撞标签
         frame_dict = self.collision_path_dict_initial_frame
         log_info = "%s contains no valid collision label, check self.collision_path_dict_initial_frame"
         assert scene_name in frame_dict, log_info % (scene_name)
@@ -313,7 +314,7 @@ class MotionGrasp:
 
         return collision
 
-    def get_camera_obj_ids(self, scene_name, camera_sn):
+    def get_camera_obj_ids(self, scene_name, camera_sn): # 获取指定场景和相机序列号中的所有物体ID
         obj_ids = set()
         frame_list = self.get_frame_list(scene_name=scene_name, camera_sn=camera_sn)
         for frame in frame_list:
