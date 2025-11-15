@@ -1,0 +1,7 @@
+2025-11-14 20:34:18,946 - WARNING - scene:0187 sequence: 0005 do not generate any valid grasp, using lower score bound to select again
+2025-11-14 20:34:27,435 - WARNING - scene:0187 sequence: 0007 do not generate any valid grasp, using lower score bound to select again
+2025-11-14 20:34:38,956 - WARNING - scene:0187 sequence: 0010 do not generate any valid grasp, using lower score bound to select again
+2025-11-14 20:34:46,159 - WARNING - scene:0187 sequence: 0011 do not generate any valid grasp, using lower score bound to select again
+2025-11-14 20:34:48,603 - WARNING - scene:0187 sequence: 0012 do not generate any valid grasp, using lower score bound to select again
+2025-11-14 20:34:54,777 - WARNING - scene:0187 sequence: 0013 do not generate any valid grasp, using lower score bound to select again
+2025-11-14 20:34:56,990 - WARNING - scene:0187 sequence: 0014 do not generate any valid grasp, using lower score bound to select again

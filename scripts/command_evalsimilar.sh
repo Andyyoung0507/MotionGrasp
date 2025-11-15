@@ -6,7 +6,7 @@ CUDA_VISIBLE_DEVICES=0 python test.py \
 --batch_size 2 \
 --model_name "pointnet" \
 --dataset_root "/data/GraspNet_1billion" \
---evaluate_root "/data/one_billion" \
+--evaluate_root "/data/testset" \
 --feature_dim 128 \
 --num_point 20000 \
 --split "test" \

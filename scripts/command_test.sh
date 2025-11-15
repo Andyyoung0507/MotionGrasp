@@ -1,4 +1,4 @@
-CUDA_VISIBLE_DEVICES=0 python test.py \
+CUDA_VISIBLE_DEVICES=1 python test.py \
 --camera "realsense" \
 --log_dir "../logs/log_train" \
 --frame_size 5 \
@@ -6,7 +6,7 @@ CUDA_VISIBLE_DEVICES=0 python test.py \
 --batch_size 2 \
 --model_name "pointnet" \
 --dataset_root "/data/GraspNet_1billion" \
---evaluate_root "/data/one_billion" \
+--evaluate_root "/data/testset" \
 --feature_dim 128 \
 --num_point 20000 \
 --split "test" \

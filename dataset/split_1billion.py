@@ -17,11 +17,11 @@ PREFIX_POSE = 'registered_'
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--data_dir', default='/data/GraspNet_1billion', type=str)
-parser.add_argument('--billion_dir', default='/data/one_billion', type=str)
+parser.add_argument('--test_dir', default='/data/testset', type=str)
 cfgs = parser.parse_args()
 
 scene_root = os.path.join(cfgs.data_dir, 'scenes')
-billion_root = os.path.join(cfgs.billion_dir, 'scenes')
+billion_root = os.path.join(cfgs.test_dir, 'scenes')
 model_root = os.path.join(cfgs.data_dir, 'models')
 
 
@@ -31,7 +31,7 @@ def make_dir(root):
 
 
 def split():
-    camera_intrinsics_path = os.path.join(cfgs.billion_dir, 'cam_intrinsics')
+    camera_intrinsics_path = os.path.join(cfgs.test_dir, 'cam_intrinsics')
     make_dir(camera_intrinsics_path)
     scene_num = len(os.listdir(scene_root))
     for i in tqdm(range(100, scene_num), desc='Processing scene'):
@@ -114,8 +114,8 @@ def make_frame_dicts(type):
             scene_dict[camera_sn] = camera_dict
         
         frame_dicts[scene] = scene_dict
-    frame_path = os.path.join(cfgs.billion_dir, 'collision_label_initial_frame', '{}_frame_dicts.json'.format(type))
-    make_dir(os.path.join(cfgs.billion_dir, 'collision_label_initial_frame'))
+    frame_path = os.path.join(cfgs.test_dir, 'collision_label_initial_frame', '{}_frame_dicts.json'.format(type))
+    make_dir(os.path.join(cfgs.test_dir, 'collision_label_initial_frame'))
 
     with open(frame_path, 'w') as f:
         data = json.dumps(frame_dicts)
@@ -126,7 +126,7 @@ def make_frame_dicts(type):
 def make_object_name_list():
     object_name_list = []
     save_dict = {}
-    object_name_list_path = os.path.join(cfgs.billion_dir, 'default.yaml')
+    object_name_list_path = os.path.join(cfgs.test_dir, 'default.yaml')
 
     model_list = sorted(os.listdir(model_root))
     for id, model in enumerate(model_list):
